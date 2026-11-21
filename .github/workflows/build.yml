@@ -1,0 +1,57 @@
+name: Build plugins
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-14 # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v4
+
+      # JUCE は git 管理外(external/JUCE は .gitignore)なので CI で取得する。
+      # comp も monoral-to-steleo/external/JUCE を共用する。
+      - name: Fetch JUCE 9.0.5
+        run: git clone --depth 1 --branch 9.0.5 https://github.com/juce-framework/JUCE.git monoral-to-steleo/external/JUCE
+
+      - name: Install Ninja
+        run: brew install ninja
+
+      - name: Build TwoStageComp
+        working-directory: comp
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          ./build/CurveCheck
+
+      - name: Build MonoToStereo
+        working-directory: monoral-to-steleo
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+
+      # Apple Silicon では未署名バイナリは読み込めないため ad-hoc 署名する。
+      # zip は ditto で作り、バンドルの構造・権限を保つ。
+      - name: Sign and package
+        run: |
+          mkdir -p dist
+          package() {
+            local dir="$1" name="$2"
+            local vst3="$dir/build/${name}_artefacts/Release/VST3/${name}.vst3"
+            local app="$dir/build/${name}_artefacts/Release/Standalone/${name}.app"
+            codesign --force --deep -s - "$vst3"
+            codesign --force --deep -s - "$app"
+            ditto -c -k --keepParent "$vst3" "dist/${name}-VST3.zip"
+            ditto -c -k --keepParent "$app" "dist/${name}-Standalone.zip"
+          }
+          package comp TwoStageComp
+          package monoral-to-steleo MonoToStereo
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plugins-macos-arm64
+          path: dist/*.zip
+          if-no-files-found: error
