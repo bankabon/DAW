@@ -1,0 +1,5 @@
+build/
+.cache/
+external/JUCE/
+.DS_Store
+build-*/
